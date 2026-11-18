@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from "react";
+import { supabase } from "../lib/supabase";
 
 export type QuizCategory = string;
 
@@ -14,59 +15,68 @@ interface Question {
 interface QuestionManagerProps {
   subjects: string[];
   onSubjectsChange: (subjects: string[]) => void;
+  schoolId: string;
 }
 
 function QuestionManager({
   subjects,
   onSubjectsChange,
+  schoolId,
 }: QuestionManagerProps) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [questionText, setQuestionText] = useState("");
   const [options, setOptions] = useState(["", "", "", ""]);
   const [correctAnswer, setCorrectAnswer] = useState(0);
-  const [selectedSubject, setSelectedSubject] = useState(
-    subjects[0] || ""
-  );
-
+  const [selectedSubject, setSelectedSubject] = useState(subjects[0] || "");
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const [newSubject, setNewSubject] = useState("");
-  const [editingSubject, setEditingSubject] = useState<string | null>(
-    null
-  );
+  const [editingSubject, setEditingSubject] = useState<string | null>(null);
   const [editingSubjectName, setEditingSubjectName] = useState("");
-
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("quizly_questions");
-
-      if (saved) {
-        const parsed = JSON.parse(saved);
-
-        if (Array.isArray(parsed)) {
-          const formatted: Question[] = parsed.map((item, index) => ({
-            id: item.id || `question-${index}`,
-            question: item.question || "",
-            options: Array.isArray(item.options)
-              ? item.options
-              : ["", "", "", ""],
-            correctAnswer: item.correctAnswer ?? item.answer ?? 0,
-            category: item.category || "React",
-          }));
-
-          setQuestions(formatted);
-        }
-      }
-    } catch {
-      console.error("Questions could not be loaded.");
+  const loadQuestions = async () => {
+    if (!schoolId) {
+      setQuestions([]);
+      setLoading(false);
+      setMessage("Please select a school first.");
+      return;
     }
-  }, []);
+
+    setLoading(true);
+
+    const { data, error } = await supabase
+      .from("quiz_questions")
+      .select("id, question, options, correct_answer, category")
+      .eq("school_id", schoolId)
+      .order("id", { ascending: false });
+
+    if (error) {
+      console.error("LOAD QUESTIONS ERROR:", error);
+      setMessage("Questions could not be loaded: " + error.message);
+      setLoading(false);
+      return;
+    }
+
+    const formatted: Question[] = (data || []).map((item) => ({
+      id: item.id,
+      question: item.question || "",
+      options: Array.isArray(item.options)
+        ? item.options
+        : ["", "", "", ""],
+      correctAnswer: item.correct_answer ?? 0,
+      category: item.category || "General",
+    }));
+
+    setQuestions(formatted);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    localStorage.setItem("quizly_questions", JSON.stringify(questions));
-  }, [questions]);
+    loadQuestions();
+  }, [schoolId]);
 
   useEffect(() => {
     if (!subjects.includes(selectedSubject) && subjects.length > 0) {
@@ -89,11 +99,7 @@ function QuestionManager({
       return;
     }
 
-    if (
-      subjects.some(
-        (subject) => subject.toLowerCase() === name.toLowerCase()
-      )
-    ) {
+    if (subjects.some((s) => s.toLowerCase() === name.toLowerCase())) {
       setMessage("This subject already exists.");
       return;
     }
@@ -109,7 +115,7 @@ function QuestionManager({
     setEditingSubjectName(subject);
   };
 
-  const saveSubjectEdit = () => {
+  const saveSubjectEdit = async () => {
     const newName = editingSubjectName.trim();
 
     if (!editingSubject || !newName) {
@@ -119,27 +125,33 @@ function QuestionManager({
 
     if (
       subjects.some(
-        (subject) =>
-          subject !== editingSubject &&
-          subject.toLowerCase() === newName.toLowerCase()
+        (s) =>
+          s !== editingSubject &&
+          s.toLowerCase() === newName.toLowerCase()
       )
     ) {
       setMessage("This subject already exists.");
       return;
     }
 
-    const updatedSubjects = subjects.map((subject) =>
-      subject === editingSubject ? newName : subject
-    );
+    const { error } = await supabase
+      .from("quiz_questions")
+      .update({
+        subject: newName,
+        category: newName,
+      })
+      .eq("school_id", schoolId)
+      .eq("category", editingSubject);
 
-    const updatedQuestions = questions.map((question) =>
-      question.category === editingSubject
-        ? { ...question, category: newName }
-        : question
-    );
+    if (error) {
+      console.error("SUBJECT UPDATE ERROR:", error);
+      setMessage("Subject update failed: " + error.message);
+      return;
+    }
 
-    onSubjectsChange(updatedSubjects);
-    setQuestions(updatedQuestions);
+    onSubjectsChange(
+      subjects.map((s) => (s === editingSubject ? newName : s))
+    );
 
     if (selectedSubject === editingSubject) {
       setSelectedSubject(newName);
@@ -147,17 +159,16 @@ function QuestionManager({
 
     setEditingSubject(null);
     setEditingSubjectName("");
+    await loadQuestions();
     setMessage("Subject updated successfully!");
   };
 
-  const deleteSubject = (subject: string) => {
-    const subjectQuestions = questions.filter(
-      (question) => question.category === subject
-    );
+  const deleteSubject = async (subject: string) => {
+    const count = questions.filter((q) => q.category === subject).length;
 
-    if (subjectQuestions.length > 0) {
+    if (count > 0) {
       setMessage(
-        `Delete or move this subject's ${subjectQuestions.length} questions first.`
+        `Delete or move this subject's ${count} questions first.`
       );
       return;
     }
@@ -171,24 +182,24 @@ function QuestionManager({
       return;
     }
 
-    const updatedSubjects = subjects.filter(
-      (item) => item !== subject
-    );
-
-    onSubjectsChange(updatedSubjects);
-    setSelectedSubject(updatedSubjects[0]);
+    const updated = subjects.filter((s) => s !== subject);
+    onSubjectsChange(updated);
+    setSelectedSubject(updated[0] || "");
     setMessage("Subject deleted successfully!");
   };
 
   const updateOption = (index: number, value: string) => {
     setOptions((previous) =>
-      previous.map((option, optionIndex) =>
-        optionIndex === index ? value : option
-      )
+      previous.map((option, i) => (i === index ? value : option))
     );
   };
 
-  const saveQuestion = () => {
+  const saveQuestion = async () => {
+    if (!schoolId) {
+      setMessage("Please select a school first.");
+      return;
+    }
+
     if (!questionText.trim()) {
       setMessage("Please enter a question.");
       return;
@@ -204,27 +215,51 @@ function QuestionManager({
       return;
     }
 
-    const questionData: Question = {
-      id: editingId || crypto.randomUUID(),
+    setSaving(true);
+    setMessage("");
+
+    const questionData = {
       question: questionText.trim(),
       options: options.map((option) => option.trim()),
-      correctAnswer,
+      correct_answer: correctAnswer,
+      subject: selectedSubject,
       category: selectedSubject,
+      school_id: schoolId,
     };
 
+    let error;
+
     if (editingId) {
-      setQuestions((previous) =>
-        previous.map((question) =>
-          question.id === editingId ? questionData : question
-        )
-      );
-      setMessage("Question updated successfully!");
+      const result = await supabase
+        .from("quiz_questions")
+        .update(questionData)
+        .eq("id", editingId)
+        .eq("school_id", schoolId);
+
+      error = result.error;
     } else {
-      setQuestions((previous) => [...previous, questionData]);
-      setMessage("Question added successfully!");
+      const result = await supabase
+        .from("quiz_questions")
+        .insert(questionData);
+
+      error = result.error;
     }
 
+    setSaving(false);
+
+    if (error) {
+      console.error("SAVE QUESTION ERROR:", error);
+      setMessage("Question save failed: " + error.message);
+      return;
+    }
+
+    await loadQuestions();
     resetForm();
+    setMessage(
+      editingId
+        ? "Question updated successfully!"
+        : "Question added successfully!"
+    );
   };
 
   const editQuestion = (question: Question) => {
@@ -236,24 +271,31 @@ function QuestionManager({
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const deleteQuestion = (id: string) => {
+  const deleteQuestion = async (id: string) => {
     if (!window.confirm("Are you sure you want to delete this question?")) {
       return;
     }
 
-    setQuestions((previous) =>
-      previous.filter((question) => question.id !== id)
-    );
+    const { error } = await supabase
+      .from("quiz_questions")
+      .delete()
+      .eq("id", id)
+      .eq("school_id", schoolId);
 
-    if (editingId === id) {
-      resetForm();
+    if (error) {
+      console.error("DELETE QUESTION ERROR:", error);
+      setMessage("Delete failed: " + error.message);
+      return;
     }
 
+    if (editingId === id) resetForm();
+
+    await loadQuestions();
     setMessage("Question deleted successfully!");
   };
 
   const filteredQuestions = questions.filter(
-    (question) => question.category === selectedSubject
+    (q) => q.category === selectedSubject
   );
 
   return (
@@ -265,53 +307,38 @@ function QuestionManager({
         </div>
       </div>
 
-      <div className="card" style={{ padding: "24px", marginBottom: "25px" }}>
+      <div className="card" style={{ padding: 24, marginBottom: 25 }}>
         <h3>➕ Add New Subject</h3>
 
-        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <input
-            type="text"
-            placeholder="Enter subject name e.g. Maths"
             value={newSubject}
             onChange={(e) => setNewSubject(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") addSubject();
             }}
-            style={{
-              flex: "1",
-              minWidth: "200px",
-              padding: "12px",
-              borderRadius: "8px",
-              border: "1px solid #ddd",
-            }}
+            placeholder="Enter subject name e.g. Maths"
+            style={{ flex: 1, minWidth: 200, padding: 12 }}
           />
-
           <button className="primary-button" onClick={addSubject}>
             Add Subject
           </button>
         </div>
 
-        <div style={{ marginTop: "20px" }}>
+        <div style={{ marginTop: 20 }}>
           <h3>All Subjects ({subjects.length})</h3>
 
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "10px",
-              marginTop: "12px",
-            }}
-          >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             {subjects.map((subject) => (
               <div
                 key={subject}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "8px",
-                  padding: "10px 12px",
+                  gap: 8,
+                  padding: 10,
                   background: "#f3f0ff",
-                  borderRadius: "8px",
+                  borderRadius: 8,
                 }}
               >
                 {editingSubject === subject ? (
@@ -321,7 +348,7 @@ function QuestionManager({
                       onChange={(e) =>
                         setEditingSubjectName(e.target.value)
                       }
-                      style={{ width: "120px", padding: "5px" }}
+                      style={{ width: 120 }}
                     />
                     <button onClick={saveSubjectEdit}>Save</button>
                     <button onClick={() => setEditingSubject(null)}>
@@ -331,16 +358,10 @@ function QuestionManager({
                 ) : (
                   <>
                     <strong>{subject}</strong>
-                    <button
-                      title="Rename subject"
-                      onClick={() => startEditSubject(subject)}
-                    >
+                    <button onClick={() => startEditSubject(subject)}>
                       ✏️
                     </button>
-                    <button
-                      title="Delete subject"
-                      onClick={() => deleteSubject(subject)}
-                    >
+                    <button onClick={() => deleteSubject(subject)}>
                       🗑️
                     </button>
                   </>
@@ -358,9 +379,8 @@ function QuestionManager({
         </div>
       </div>
 
-      <div className="card" style={{ padding: "24px", marginBottom: "25px" }}>
+      <div className="card" style={{ padding: 24, marginBottom: 25 }}>
         <label htmlFor="question-subject">Select Subject</label>
-
         <select
           id="question-subject"
           value={selectedSubject}
@@ -368,10 +388,8 @@ function QuestionManager({
           style={{
             display: "block",
             width: "100%",
-            padding: "12px",
+            padding: 12,
             margin: "10px 0 20px",
-            borderRadius: "8px",
-            border: "1px solid #ddd",
           }}
         >
           {subjects.map((subject) => (
@@ -391,11 +409,8 @@ function QuestionManager({
           style={{
             display: "block",
             width: "100%",
-            padding: "12px",
+            padding: 12,
             margin: "10px 0 20px",
-            borderRadius: "8px",
-            border: "1px solid #ddd",
-            resize: "vertical",
           }}
         />
 
@@ -407,7 +422,7 @@ function QuestionManager({
             style={{
               display: "flex",
               alignItems: "center",
-              gap: "10px",
+              gap: 10,
               margin: "12px 0",
             }}
           >
@@ -416,23 +431,14 @@ function QuestionManager({
               name="correct-answer"
               checked={correctAnswer === index}
               onChange={() => setCorrectAnswer(index)}
-              title="Set as correct answer"
             />
-
             <input
               type="text"
               value={option}
               placeholder={`Option ${index + 1}`}
               onChange={(e) => updateOption(index, e.target.value)}
-              style={{
-                flex: "1",
-                minWidth: "0",
-                padding: "12px",
-                borderRadius: "8px",
-                border: "1px solid #ddd",
-              }}
+              style={{ flex: 1, minWidth: 0, padding: 12 }}
             />
-
             {correctAnswer === index && (
               <span style={{ color: "green", fontWeight: "bold" }}>
                 Correct
@@ -441,13 +447,17 @@ function QuestionManager({
           </div>
         ))}
 
-        <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button
             className="primary-button"
             onClick={saveQuestion}
-            disabled={subjects.length === 0}
+            disabled={subjects.length === 0 || saving}
           >
-            {editingId ? "Update Question" : "Save Question"}
+            {saving
+              ? "Saving..."
+              : editingId
+                ? "Update Question"
+                : "Save Question"}
           </button>
 
           {editingId && (
@@ -458,9 +468,7 @@ function QuestionManager({
         </div>
 
         {message && (
-          <p style={{ marginTop: "15px", fontWeight: "bold" }}>
-            {message}
-          </p>
+          <p style={{ marginTop: 15, fontWeight: "bold" }}>{message}</p>
         )}
       </div>
 
@@ -473,8 +481,8 @@ function QuestionManager({
         </div>
       </div>
 
-      <div className="card" style={{ padding: "24px" }}>
-        <div style={{ marginBottom: "20px" }}>
+      <div className="card" style={{ padding: 24 }}>
+        <div style={{ marginBottom: 20 }}>
           <label htmlFor="filter-subject">Filter by Subject</label>
           <select
             id="filter-subject"
@@ -483,10 +491,8 @@ function QuestionManager({
             style={{
               display: "block",
               width: "100%",
-              padding: "12px",
-              marginTop: "8px",
-              borderRadius: "8px",
-              border: "1px solid #ddd",
+              padding: 12,
+              marginTop: 8,
             }}
           >
             {subjects.map((subject) => (
@@ -497,7 +503,9 @@ function QuestionManager({
           </select>
         </div>
 
-        {filteredQuestions.length === 0 ? (
+        {loading ? (
+          <p>Loading questions...</p>
+        ) : filteredQuestions.length === 0 ? (
           <div className="empty-state">
             <h3>No Questions Found</h3>
             <p>Add your first question for {selectedSubject}.</p>
@@ -515,7 +523,7 @@ function QuestionManager({
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  gap: "12px",
+                  gap: 12,
                   flexWrap: "wrap",
                 }}
               >
@@ -523,7 +531,7 @@ function QuestionManager({
                   {index + 1}. {question.question}
                 </strong>
 
-                <div style={{ display: "flex", gap: "8px" }}>
+                <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="secondary-button"
                     onClick={() => editQuestion(question)}
@@ -539,7 +547,7 @@ function QuestionManager({
                 </div>
               </div>
 
-              <div style={{ marginTop: "12px" }}>
+              <div style={{ marginTop: 12 }}>
                 {question.options.map((option, optionIndex) => (
                   <p
                     key={optionIndex}
@@ -556,7 +564,8 @@ function QuestionManager({
                     }}
                   >
                     {String.fromCharCode(65 + optionIndex)}. {option}
-                    {optionIndex === question.correctAnswer && " ✓ Correct"}
+                    {optionIndex === question.correctAnswer &&
+                      " ✓ Correct"}
                   </p>
                 ))}
               </div>

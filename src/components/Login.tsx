@@ -1,5 +1,7 @@
 
 import { useState } from "react";
+import { signIn } from "../lib/auth";
+import { supabase } from "../lib/supabase";
 
 interface LoginProps {
   onLogin: (name: string) => void;
@@ -19,7 +21,9 @@ function Login({ onLogin }: LoginProps) {
     confirmPassword: "",
   });
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  const [isLoading, setIsLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     const newErrors = {
@@ -65,11 +69,48 @@ function Login({ onLogin }: LoginProps) {
       return;
     }
 
-    const userName = isSignup
-      ? name.trim()
-      : email.trim().split("@")[0];
+    setIsLoading(true);
 
-    onLogin(userName);
+    try {
+      if (isSignup) {
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              full_name: name.trim(),
+            },
+          },
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        if (data.session) {
+          onLogin(name.trim());
+        } else {
+          alert(
+            "Account created! Please check your email for confirmation before signing in."
+          );
+        }
+      } else {
+        await signIn(email.trim(), password);
+
+        const userName = email.trim().split("@")[0];
+
+        onLogin(userName);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Something went wrong. Please try again.";
+
+      alert(message);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   function switchMode() {
@@ -78,6 +119,7 @@ function Login({ onLogin }: LoginProps) {
     setEmail("");
     setPassword("");
     setConfirmPassword("");
+
     setErrors({
       name: "",
       email: "",
@@ -143,6 +185,7 @@ function Login({ onLogin }: LoginProps) {
             {isSignup && (
               <>
                 <label htmlFor="signup-name">Full Name</label>
+
                 <input
                   id="signup-name"
                   type="text"
@@ -154,6 +197,7 @@ function Login({ onLogin }: LoginProps) {
                     setErrors((prev) => ({ ...prev, name: "" }));
                   }}
                 />
+
                 {errors.name && (
                   <p className="validation-error">{errors.name}</p>
                 )}
@@ -161,6 +205,7 @@ function Login({ onLogin }: LoginProps) {
             )}
 
             <label htmlFor="login-email">Email Address</label>
+
             <input
               id="login-email"
               type="email"
@@ -172,6 +217,7 @@ function Login({ onLogin }: LoginProps) {
                 setErrors((prev) => ({ ...prev, email: "" }));
               }}
             />
+
             {errors.email && (
               <p className="validation-error">{errors.email}</p>
             )}
@@ -192,6 +238,7 @@ function Login({ onLogin }: LoginProps) {
                 setErrors((prev) => ({ ...prev, password: "" }));
               }}
             />
+
             {errors.password && (
               <p className="validation-error">{errors.password}</p>
             )}
@@ -201,6 +248,7 @@ function Login({ onLogin }: LoginProps) {
                 <label htmlFor="confirm-password">
                   Confirm Password
                 </label>
+
                 <input
                   id="confirm-password"
                   type="password"
@@ -215,6 +263,7 @@ function Login({ onLogin }: LoginProps) {
                     }));
                   }}
                 />
+
                 {errors.confirmPassword && (
                   <p className="validation-error">
                     {errors.confirmPassword}
@@ -223,8 +272,17 @@ function Login({ onLogin }: LoginProps) {
               </>
             )}
 
-            <button className="login-submit" type="submit">
-              {isSignup ? "Create Account" : "Sign In"}
+            <button
+              className="login-submit"
+              type="submit"
+              disabled={isLoading}
+            >
+              {isLoading
+                ? "Please wait..."
+                : isSignup
+                  ? "Create Account"
+                  : "Sign In"}
+
               <span>→</span>
             </button>
           </form>

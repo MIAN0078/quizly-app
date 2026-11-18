@@ -1,10 +1,20 @@
+import { supabase } from "./lib/supabase";
+
+import ManageStudents from "./components/ManageStudents";
+
+import SchoolAdminDashboard from "./components/SchoolAdminDashboard";
+
 import Login from "./components/Login";
+
 import { useEffect, useState } from "react";
+
 import "./App.css";
 
 import QuestionManager, {
   type QuizCategory,
 } from "./components/QuestionManager";
+
+import SchoolSetup from "./components/SchoolSetup";
 
 type Question = {
   id?: string;
@@ -25,9 +35,11 @@ type Page =
   | "Dashboard"
   | "My Quizzes"
   | "Manage Questions"
+  | "Manage Students"
   | "My Results"
   | "Leaderboard"
-  | "Settings";
+  | "Settings"
+  | "My Schools";
 
 type QuizResult = {
   id: string;
@@ -165,6 +177,10 @@ function App() {
   );
 
   const [page, setPage] = useState<Page>("Dashboard");
+
+  const [selectedSchoolId, setSelectedSchoolId] = useState("");
+  const [selectedSchoolName, setSelectedSchoolName] = useState("");
+  const [schoolRole, setSchoolRole] = useState("");
 
   const [questions, setQuestions] =
     useState<Question[]>(loadSavedQuestions);
@@ -314,7 +330,9 @@ function App() {
       }
 
       finishQuiz(finalAnswers);
+
       setTimeLeft(0);
+
       return;
     }
 
@@ -343,10 +361,13 @@ function App() {
 
     if (categoryQuestions.length === 0) {
       alert(
-        `There are no ${category} questions yet. Please add questions in Manage Questions.`
+        schoolRole === "admin"
+          ? `There are no ${category} questions yet. Please add questions in Manage Questions.`
+          : `There are no ${category} questions yet. Please ask your school admin to add questions.`
       );
 
-      setPage("Manage Questions");
+      setPage(schoolRole === "admin" ? "Manage Questions" : "My Quizzes");
+
       return;
     }
 
@@ -379,11 +400,21 @@ function App() {
   };
 
   const openPage = (nextPage: Page) => {
+    if (
+      (nextPage === "Manage Questions" || nextPage === "Manage Students") &&
+      schoolRole !== "admin"
+    ) {
+      alert("Only school admins can access this page.");
+      setPage("Dashboard");
+      return;
+    }
+
     if (nextPage !== "My Quizzes") {
       setQuizStarted(false);
     }
 
     setQuestions(loadSavedQuestions());
+
     setShowResult(false);
     setShowReview(false);
     setReviewResult(null);
@@ -415,12 +446,26 @@ function App() {
     alert("Profile updated successfully!");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     const confirmLogout = window.confirm(
       "Are you sure you want to logout?"
     );
 
     if (!confirmLogout) return;
+
+    try {
+      const { error } = await supabase.auth.signOut();
+
+      if (error) {
+        console.error("Logout error:", error);
+        alert("Could not logout. Please try again.");
+        return;
+      }
+    } catch (error) {
+      console.error("Logout error:", error);
+      alert("Could not logout. Please try again.");
+      return;
+    }
 
     setQuizStarted(false);
     setShowResult(false);
@@ -431,6 +476,9 @@ function App() {
     setSelectedAnswer(null);
     setAnswers([]);
     setActiveQuizQuestions([]);
+    setSelectedSchoolId("");
+    setSelectedSchoolName("");
+    setSchoolRole("");
     setPage("Dashboard");
     setIsLoggedIn(false);
   };
@@ -438,9 +486,15 @@ function App() {
   const navigation: { name: Page; icon: string }[] = [
     { name: "Dashboard", icon: "⌂" },
     { name: "My Quizzes", icon: "▤" },
-    { name: "Manage Questions", icon: "✎" },
+    ...(schoolRole === "admin"
+      ? [
+          { name: "Manage Questions" as Page, icon: "✎" },
+          { name: "Manage Students" as Page, icon: "👨‍🎓" },
+        ]
+      : []),
     { name: "My Results", icon: "▥" },
     { name: "Leaderboard", icon: "🏆" },
+    { name: "My Schools", icon: "🏫" },
     { name: "Settings", icon: "⚙" },
   ];
 
@@ -462,12 +516,12 @@ function App() {
           Close Review
         </button>
       </div>
-                
+
       {result.review?.map((item, index) => (
         <div className="review-question-card" key={index}>
           <h3>
             Question {index + 1}: {item.question}
-          </h3>
+                      </h3>
 
           <div className="review-options">
             {item.options.map((option, optionIndex) => {
@@ -507,14 +561,116 @@ function App() {
     </div>
   );
 
+  // Student and Admin Login
+
   if (!isLoggedIn) {
     return (
       <Login
-        onLogin={(name) => {
+        onLogin={async (name) => {
+          const {
+            data: { user },
+            error: userError,
+          } = await supabase.auth.getUser();
+
+          if (userError || !user) {
+            console.error("User not found:", userError);
+            alert("User session not found. Please login again.");
+            return;
+          }
+
           const savedName = localStorage.getItem("quizly_profile_name");
-          setLoggedInName(savedName || name);
-          setProfileName(savedName || name);
+
+          const accountName =
+            savedName ||
+            user.user_metadata?.full_name ||
+            name ||
+            user.email?.split("@")[0] ||
+            "User";
+
+          setLoggedInName(accountName);
+          setProfileName(accountName);
+          setProfileEmail(user.email || "");
+
+          // First check school membership and role
+          const { data: membership, error: membershipError } =
+            await supabase
+              .from("school_members")
+              .select("school_id, role")
+              .eq("user_id", user.id)
+              .limit(1)
+              .maybeSingle();
+
+          if (membershipError) {
+            console.error("Membership lookup error:", membershipError);
+            alert("Could not check your school role. Please try again.");
+            return;
+          }
+
+          if (membership) {
+            const { data: school, error: schoolError } = await supabase
+              .from("schools")
+              .select("name")
+              .eq("id", membership.school_id)
+              .maybeSingle();
+
+            if (schoolError) {
+              console.error("School lookup error:", schoolError);
+            }
+
+            setSelectedSchoolId(membership.school_id);
+            setSelectedSchoolName(school?.name || "");
+            setSchoolRole(membership.role);
+          } else {
+            // If no school membership, check student account
+            const { data: student, error: studentError } = await supabase
+              .from("school_students")
+              .select("school_id, full_name, email")
+              .eq("user_id", user.id)
+              .limit(1)
+              .maybeSingle();
+
+            if (studentError) {
+              console.error("Student lookup error:", studentError);
+              alert("Could not check your student account. Please try again.");
+              return;
+            }
+
+            if (student) {
+              const { data: school, error: schoolError } = await supabase
+                .from("schools")
+                .select("name")
+                .eq("id", student.school_id)
+                .maybeSingle();
+
+              if (schoolError) {
+                console.error("School lookup error:", schoolError);
+              }
+
+              setSelectedSchoolId(student.school_id);
+              setSelectedSchoolName(school?.name || "");
+              setSchoolRole("student");
+              setLoggedInName(student.full_name);
+              setProfileName(student.full_name);
+              setProfileEmail(student.email);
+
+              localStorage.setItem(
+                "quizly_profile_name",
+                student.full_name
+              );
+
+              localStorage.setItem(
+                "quizly_profile_email",
+                student.email
+              );
+            } else {
+              setSchoolRole("student");
+              setSelectedSchoolId("");
+              setSelectedSchoolName("");
+            }
+          }
+
           setIsLoggedIn(true);
+          setPage("Dashboard");
         }}
       />
     );
@@ -567,7 +723,7 @@ function App() {
           </div>
           <div>
             <strong>{loggedInName}</strong>
-            <span>Free Account</span>
+            <span>{schoolRole || "Free Account"}</span>
           </div>
           <span className="user-more">•••</span>
         </div>
@@ -603,14 +759,13 @@ function App() {
               </div>
               <div>
                 <strong>{loggedInName}</strong>
-                <span>Student</span>
+                <span>{schoolRole || "Student"}</span>
               </div>
               <span>⌄</span>
             </div>
           </div>
         </header>
-
-        {quizStarted && !showResult && question ? (
+                {quizStarted && !showResult && question ? (
           <section className="content quiz-content">
             <div className="page-heading">
               <div>
@@ -620,14 +775,12 @@ function App() {
                 <h1>{selectedCategory} Quiz</h1>
                 <p>Take your time and choose the best answer.</p>
               </div>
-
               <div className="quiz-header-actions">
                 <div className="quiz-timer">
                   <span>⏱</span>
                   <strong>{formatTime(timeLeft)}</strong>
                   <small>Time Left</small>
                 </div>
-
                 <button
                   className="back-button"
                   onClick={() => {
@@ -639,7 +792,6 @@ function App() {
                 </button>
               </div>
             </div>
-
             <div className="exam-layout">
               <div className="exam-main card">
                 <div className="exam-header">
@@ -647,25 +799,21 @@ function App() {
                     <span className="exam-chip">{selectedCategory}</span>
                     <h2>Knowledge Assessment</h2>
                   </div>
-
                   <div className="exam-number">
                     Question <strong>{currentQuestion + 1}</strong> /{" "}
                     {activeQuizQuestions.length}
                   </div>
                 </div>
-
                 <div className="progress-info">
                   <span>Quiz Progress</span>
                   <strong>{Math.round(progress)}%</strong>
                 </div>
-
                 <div className="progress-track">
                   <div
                     className="progress-fill"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
-
                 <div className="exam-question">
                   <span>
                     QUESTION {String(currentQuestion + 1).padStart(2, "0")}
@@ -675,7 +823,6 @@ function App() {
                     Select one correct answer from the following options.
                   </p>
                 </div>
-
                 <div className="answer-list">
                   {question.options.map((option, index) => (
                     <button
@@ -695,12 +842,10 @@ function App() {
                     </button>
                   ))}
                 </div>
-
                 <div className="exam-footer">
                   <span>
                     ✦ Your progress is saved during this session
                   </span>
-
                   <button
                     className="primary-button"
                     onClick={nextQuestion}
@@ -713,11 +858,9 @@ function App() {
                   </button>
                 </div>
               </div>
-
               <aside className="exam-sidebar card">
                 <h3>Question Overview</h3>
                 <p>Track your progress</p>
-
                 <div className="question-grid">
                   {activeQuizQuestions.map((_, index) => (
                     <div
@@ -732,7 +875,6 @@ function App() {
                     </div>
                   ))}
                 </div>
-
                 <div className="legend">
                   <span>
                     <i className="legend-current" /> Current
@@ -744,7 +886,6 @@ function App() {
                     <i className="legend-empty" /> Upcoming
                   </span>
                 </div>
-
                 <div className="exam-tip">
                   <span>💡</span>
                   <strong>Quick Tip</strong>
@@ -755,7 +896,7 @@ function App() {
               </aside>
             </div>
           </section>
-                  ) : showResult ? (
+        ) : showResult ? (
           <section className="content">
             <div className="result-card card">
               <div className="result-trophy">🏆</div>
@@ -764,7 +905,6 @@ function App() {
               <p>
                 You have successfully completed your {selectedCategory} quiz.
               </p>
-
               <div className="result-score">
                 <strong>
                   {activeQuizQuestions.length > 0
@@ -774,7 +914,6 @@ function App() {
                 </strong>
                 <span>YOUR FINAL SCORE</span>
               </div>
-
               <div className="result-summary">
                 <div>
                   <strong>{correctAnswers}</strong>
@@ -789,7 +928,6 @@ function App() {
                   <span>Total Questions</span>
                 </div>
               </div>
-
               <div className="result-message">
                 {score >= activeQuizQuestions.length * 0.8
                   ? "Excellent work! You have a strong understanding."
@@ -797,7 +935,6 @@ function App() {
                   ? "Good effort! Keep practicing to improve your score."
                   : "Keep learning! Review the topics and try again."}
               </div>
-
               <div className="result-actions">
                 <button
                   className="primary-button"
@@ -805,7 +942,6 @@ function App() {
                 >
                   ↻ Try Again
                 </button>
-
                 <button
                   className="secondary-button"
                   onClick={() => {
@@ -816,7 +952,6 @@ function App() {
                 >
                   Back to Dashboard
                 </button>
-
                 <button
                   className="secondary-button"
                   onClick={() => setShowReview((previous) => !previous)}
@@ -825,10 +960,18 @@ function App() {
                 </button>
               </div>
             </div>
-
             {showReview && reviewResult?.review && renderReview(reviewResult)}
           </section>
-        ) : page === "Manage Questions" ? (
+        ) : page === "My Schools" ? (
+          <SchoolSetup
+            onSchoolSelected={(schoolId, schoolName, role) => {
+              setSelectedSchoolId(schoolId);
+              setSelectedSchoolName(schoolName);
+              setSchoolRole(role);
+              setPage("Dashboard");
+            }}
+          />
+        ) : page === "Manage Questions" && schoolRole === "admin" ? (
           <section className="content">
             <div className="page-heading">
               <div>
@@ -839,12 +982,20 @@ function App() {
                 </p>
               </div>
             </div>
-
             <QuestionManager
               subjects={subjects}
               onSubjectsChange={setSubjects}
+              schoolId={selectedSchoolId}
             />
           </section>
+        ) : page === "Dashboard" && schoolRole === "admin" ? (
+          <SchoolAdminDashboard
+            schoolName={selectedSchoolName}
+            schoolId={selectedSchoolId}
+            onNavigate={(nextPage) => setPage(nextPage as Page)}
+          />
+        ) : page === "Manage Students" && schoolRole === "admin" ? (
+          <ManageStudents schoolId={selectedSchoolId} />
         ) : page === "Dashboard" ? (
           <section className="content">
             <div className="welcome-banner">
@@ -858,7 +1009,6 @@ function App() {
                   Explore Quizzes <span>→</span>
                 </button>
               </div>
-
               <div className="banner-art">
                 <div className="art-circle">✦</div>
                 <div className="art-book">📚</div>
@@ -866,7 +1016,14 @@ function App() {
                 <div className="art-small">✦</div>
               </div>
             </div>
-
+            {selectedSchoolName && (
+              <div className="card" style={{ padding: 20, marginBottom: 24 }}>
+                <strong>Selected School:</strong> {selectedSchoolName}
+                <span style={{ marginLeft: 12 }}>
+                  ({schoolRole || "Member"})
+                </span>
+              </div>
+            )}
             <div className="section-heading">
               <div>
                 <h2>Your Learning Overview</h2>
@@ -879,7 +1036,6 @@ function App() {
                 View Reports →
               </button>
             </div>
-
             <div className="stats-grid">
               <div className="stat-card card">
                 <div className="stat-top">
@@ -890,7 +1046,6 @@ function App() {
                 <strong>{questions.length}</strong>
                 <small>Questions ready to explore</small>
               </div>
-
               <div className="stat-card card">
                 <div className="stat-top">
                   <span className="stat-icon orange">◷</span>
@@ -900,7 +1055,6 @@ function App() {
                 <strong>{results.length}</strong>
                 <small>Your completed assessments</small>
               </div>
-
               <div className="stat-card card">
                 <div className="stat-top">
                   <span className="stat-icon green">♧</span>
@@ -910,7 +1064,6 @@ function App() {
                 <strong>{results.length ? `${averageScore}%` : "--"}</strong>
                 <small>Your overall performance</small>
               </div>
-
               <div className="stat-card card">
                 <div className="stat-top">
                   <span className="stat-icon blue">⚡</span>
@@ -923,7 +1076,6 @@ function App() {
                 <small>Your selected quiz duration</small>
               </div>
             </div>
-
             <div className="dashboard-columns">
               <div className="left-column">
                 <div className="section-heading">
@@ -938,32 +1090,27 @@ function App() {
                     View All →
                   </button>
                 </div>
-
                 <div className="quiz-card-list">
                   {subjects.map((category) => {
                     const count = questions.filter(
                       (item) => item.category === category
                     ).length;
-
                     return (
                       <div className="learning-card card" key={category}>
                         <div className="learning-card-top">
                           <div className="course-icon violet">✦</div>
                           <span className="level-tag">QUIZ CATEGORY</span>
                         </div>
-
                         <span className="course-category">YOUR QUESTIONS</span>
                         <h3>{category}</h3>
                         <p>
                           Practice your {category} knowledge with a category
                           based assessment.
                         </p>
-
                         <div className="course-meta">
                           <span>▤ {count} Questions</span>
                           <span>◷ {quizMinutes} Minutes</span>
                         </div>
-
                         <button
                           onClick={() => startQuiz(category)}
                           disabled={count === 0}
@@ -975,14 +1122,12 @@ function App() {
                     );
                   })}
                 </div>
-
                 <div className="section-heading activity-heading">
                   <div>
                     <h2>Recent Activity</h2>
                     <p>Your latest learning activities.</p>
                   </div>
                 </div>
-
                 {results.length > 0 ? (
                   <div className="activity-card card">
                     <div className="activity-icon">✦</div>
@@ -1008,7 +1153,6 @@ function App() {
                   </div>
                 )}
               </div>
-
               <aside className="right-column">
                 <div className="section-heading">
                   <div>
@@ -1016,14 +1160,12 @@ function App() {
                     <p>Choose your time limit.</p>
                   </div>
                 </div>
-
                 <div className="quest-card card timer-settings">
                   <div className="quest-icon">⏱</div>
                   <h3>Set Quiz Duration</h3>
                   <p>
                     Choose how much time students will get for the quiz.
                   </p>
-
                   <label htmlFor="quiz-duration">Time limit</label>
                   <select
                     id="quiz-duration"
@@ -1042,7 +1184,6 @@ function App() {
                     <option value={30}>30 Minutes</option>
                     <option value={60}>60 Minutes</option>
                   </select>
-
                   <label htmlFor="custom-duration">
                     Or enter custom minutes
                   </label>
@@ -1062,14 +1203,12 @@ function App() {
                   />
                   <small>Choose between 1 and 180 minutes.</small>
                 </div>
-
                 <div className="section-heading event-heading">
                   <div>
                     <h2>Learning Goal</h2>
                     <p>Small steps, big progress.</p>
                   </div>
                 </div>
-
                 <div className="quest-card card">
                   <div className="quest-icon">🎯</div>
                   <h3>Today's Learning Goal</h3>
@@ -1083,7 +1222,7 @@ function App() {
               </aside>
             </div>
           </section>
-        ) : page === "My Quizzes" ? (
+                  ) : page === "My Quizzes" ? (
           <section className="content">
             <div className="page-heading">
               <div>
@@ -1223,7 +1362,6 @@ function App() {
               </small>
             </div>
           </section>
-
         ) : page === "My Results" ? (
           <section className="content">
             <div className="page-heading">
