@@ -47,10 +47,18 @@ function Login({ onLogin }: LoginProps) {
     });
 
     async function checkRecoveryLink() {
+      const searchParams = new URLSearchParams(
+        window.location.search
+      );
+
+      const hashParams = new URLSearchParams(
+        window.location.hash.replace(/^#/, "")
+      );
+
       const isRecovery =
-        window.location.hash.includes("type=recovery") ||
-        new URLSearchParams(window.location.search).get("type") ===
-          "recovery";
+        searchParams.has("code") ||
+        searchParams.get("type") === "recovery" ||
+        hashParams.get("type") === "recovery";
 
       if (isRecovery) {
         const { data, error } = await supabase.auth.getSession();
