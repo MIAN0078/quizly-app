@@ -28,17 +28,43 @@ function Login({ onLogin }: LoginProps) {
 
   // Detect Supabase password recovery link
   useEffect(() => {
+    let mounted = true;
+
+    function showResetScreen() {
+      if (!mounted) return;
+
+      setIsResetPassword(true);
+      setPassword("");
+      setConfirmPassword("");
+    }
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
-        setIsResetPassword(true);
-        setPassword("");
-        setConfirmPassword("");
+        showResetScreen();
       }
     });
 
+    async function checkRecoveryLink() {
+      const isRecovery =
+        window.location.hash.includes("type=recovery") ||
+        new URLSearchParams(window.location.search).get("type") ===
+          "recovery";
+
+      if (isRecovery) {
+        const { data, error } = await supabase.auth.getSession();
+
+        if (!error && data.session) {
+          showResetScreen();
+        }
+      }
+    }
+
+    checkRecoveryLink();
+
     return () => {
+      mounted = false;
       subscription.unsubscribe();
     };
   }, []);
@@ -253,6 +279,7 @@ function Login({ onLogin }: LoginProps) {
             <p>
               Choose a strong password to protect your Quizly account.
             </p>
+
             <div className="login-decoration">
               <div className="login-circle">?</div>
               <div className="login-small-card">🔐 Stay secure!</div>
