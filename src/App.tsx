@@ -1,12 +1,5 @@
-import { supabase } from "./lib/supabase";
-
-import ManageStudents from "./components/ManageStudents";
-
-import SchoolAdminDashboard from "./components/SchoolAdminDashboard";
-
-import Login from "./components/Login";
-
 import { useEffect, useState } from "react";
+import { supabase } from "./lib/supabase";
 
 import "./App.css";
 
@@ -15,6 +8,9 @@ import QuestionManager, {
 } from "./components/QuestionManager";
 
 import SchoolSetup from "./components/SchoolSetup";
+import SchoolAdminDashboard from "./components/SchoolAdminDashboard";
+import Login from "./components/Login";
+import ManageStudents from "./components/ManageStudents";
 
 type Question = {
   id?: string;
@@ -181,6 +177,50 @@ function App() {
   const [selectedSchoolId, setSelectedSchoolId] = useState("");
   const [selectedSchoolName, setSelectedSchoolName] = useState("");
   const [schoolRole, setSchoolRole] = useState("");
+  useEffect(() => {
+  async function loadQuizTime() {
+    if (!selectedSchoolId) return;
+
+    const { data, error } = await supabase
+      .from("school_settings")
+      .select("quiz_minutes")
+      .eq("school_id", selectedSchoolId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Quiz time load error:", error.message);
+      return;
+    }
+
+    const minutes = data?.quiz_minutes ?? 10;
+    setQuizMinutes(minutes);
+    setCustomMinutes(String(minutes));
+  }
+
+  loadQuizTime();
+}, [selectedSchoolId]);
+
+const saveSchoolQuizMinutes = async (minutes: number) => {
+  if (!selectedSchoolId) {
+    throw new Error("School ID missing");
+  }
+
+  const { error } = await supabase
+    .from("school_settings")
+    .upsert(
+      {
+        school_id: selectedSchoolId,
+        quiz_minutes: minutes,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "school_id" }
+    );
+
+  if (error) throw error;
+
+  setQuizMinutes(minutes);
+  setCustomMinutes(String(minutes));
+};
 
   const [questions, setQuestions] =
     useState<Question[]>(loadSavedQuestions);
@@ -351,7 +391,7 @@ function App() {
     activeQuizQuestions,
   ]);
 
-  const startQuiz = (category: QuizCategory = selectedCategory) => {
+   const startQuiz = async (category: QuizCategory = selectedCategory) => {
     const latestQuestions = loadSavedQuestions();
     setQuestions(latestQuestions);
 
@@ -379,9 +419,29 @@ function App() {
     setShowResult(false);
     setShowReview(false);
     setReviewResult(null);
-    setTimeLeft(quizMinutes * 60);
-    setQuizStarted(true);
-    setPage("My Quizzes");
+    console.log("Student School ID:", selectedSchoolId);
+    if (!selectedSchoolId) {
+  alert("Your student account is not linked to a school. Please contact admin.");
+  return;
+}
+    const { data: settings, error: settingsError } = await supabase
+  .from("school_settings")
+  .select("quiz_minutes")
+  .eq("school_id", selectedSchoolId)
+  .maybeSingle();
+
+if (settingsError) {
+  alert("Could not load quiz time: " + settingsError.message);
+  return;
+}
+
+const savedMinutes = settings?.quiz_minutes ?? 10;
+
+setQuizMinutes(savedMinutes);
+setCustomMinutes(String(savedMinutes));
+setTimeLeft(savedMinutes * 60);
+setQuizStarted(true);
+setPage("My Quizzes");
   };
 
   const nextQuestion = () => {
@@ -448,7 +508,7 @@ function App() {
 
   const handleLogout = async () => {
     const confirmLogout = window.confirm(
-      "Are you sure you want to logout?"
+      "Are you sure you want to const startQuizlogout?"
     );
 
     if (!confirmLogout) return;
@@ -578,14 +638,11 @@ function App() {
             return;
           }
 
-          const savedName = localStorage.getItem("quizly_profile_name");
-
           const accountName =
-            savedName ||
-            user.user_metadata?.full_name ||
-            name ||
-            user.email?.split("@")[0] ||
-            "User";
+  user.user_metadata?.full_name ||
+  user.email?.split("@")[0] ||
+  name ||
+  "User";
 
           setLoggedInName(accountName);
           setProfileName(accountName);
@@ -599,6 +656,8 @@ function App() {
               .eq("user_id", user.id)
               .limit(1)
               .maybeSingle();
+              console.log("MEMBERSHIP:", membership, membershipError);
+              console.log("QUIZLY UPDATED CODE RUNNING");
 
           if (membershipError) {
             console.error("Membership lookup error:", membershipError);
@@ -623,11 +682,13 @@ function App() {
           } else {
             // If no school membership, check student account
             const { data: student, error: studentError } = await supabase
+           
               .from("school_students")
               .select("school_id, full_name, email")
               .eq("user_id", user.id)
               .limit(1)
               .maybeSingle();
+              console.log("Student Query Result:", student, studentError);
 
             if (studentError) {
               console.error("Student lookup error:", studentError);
@@ -636,6 +697,7 @@ function App() {
             }
 
             if (student) {
+              console.log("Student Record:", student);
               const { data: school, error: schoolError } = await supabase
                 .from("schools")
                 .select("name")
@@ -990,10 +1052,12 @@ function App() {
           </section>
         ) : page === "Dashboard" && schoolRole === "admin" ? (
           <SchoolAdminDashboard
-            schoolName={selectedSchoolName}
-            schoolId={selectedSchoolId}
-            onNavigate={(nextPage) => setPage(nextPage as Page)}
-          />
+  schoolName={selectedSchoolName}
+  schoolId={selectedSchoolId}
+  quizMinutes={quizMinutes}
+  onSaveQuizMinutes={saveSchoolQuizMinutes}
+  onNavigate={(nextPage) => setPage(nextPage as Page)}
+/>
         ) : page === "Manage Students" && schoolRole === "admin" ? (
           <ManageStudents schoolId={selectedSchoolId} />
         ) : page === "Dashboard" ? (
