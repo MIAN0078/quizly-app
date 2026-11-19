@@ -56,7 +56,7 @@ function Login({ onLogin }: LoginProps) {
       const { error } = await supabase.auth.resetPasswordForEmail(
         email.trim(),
         {
-          redirectTo: window.location.origin,
+          redirectTo: "https://quizly-bhg6e7ajh-khalil-portfolio1.vercel.app",
         }
       );
 
