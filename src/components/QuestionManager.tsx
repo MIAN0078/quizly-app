@@ -25,6 +25,7 @@ function QuestionManager({
 }: QuestionManagerProps) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [questionText, setQuestionText] = useState("");
+  const [optionCount, setOptionCount] = useState(4);
   const [options, setOptions] = useState(["", "", "", ""]);
   const [correctAnswer, setCorrectAnswer] = useState(0);
   const [selectedSubject, setSelectedSubject] = useState(subjects[0] || "");
@@ -60,15 +61,19 @@ function QuestionManager({
       return;
     }
 
-    const formatted: Question[] = (data || []).map((item) => ({
-      id: item.id,
-      question: item.question || "",
-      options: Array.isArray(item.options)
-        ? item.options
-        : ["", "", "", ""],
-      correctAnswer: item.correct_answer ?? 0,
-      category: item.category || "General",
-    }));
+    const formatted: Question[] = (data || []).map((item) => {
+      const savedOptions = Array.isArray(item.options)
+        ? item.options.map((option: string) => String(option))
+        : ["", "", "", ""];
+
+      return {
+        id: item.id,
+        question: item.question || "",
+        options: savedOptions,
+        correctAnswer: item.correct_answer ?? 0,
+        category: item.category || "General",
+      };
+    });
 
     setQuestions(formatted);
     setLoading(false);
@@ -86,9 +91,28 @@ function QuestionManager({
 
   const resetForm = () => {
     setQuestionText("");
+    setOptionCount(4);
     setOptions(["", "", "", ""]);
     setCorrectAnswer(0);
     setEditingId(null);
+  };
+
+  const changeOptionCount = (count: number) => {
+    setOptionCount(count);
+
+    setOptions((previous) => {
+      const updated = [...previous];
+
+      while (updated.length < count) {
+        updated.push("");
+      }
+
+      return updated.slice(0, count);
+    });
+
+    if (correctAnswer >= count) {
+      setCorrectAnswer(0);
+    }
   };
 
   const addSubject = () => {
@@ -205,13 +229,23 @@ function QuestionManager({
       return;
     }
 
+    if (options.length !== optionCount) {
+      setMessage("Please select your answer options.");
+      return;
+    }
+
     if (options.some((option) => !option.trim())) {
-      setMessage("Please fill all four answer options.");
+      setMessage("Please fill all answer options.");
       return;
     }
 
     if (!selectedSubject) {
       setMessage("Please select a subject.");
+      return;
+    }
+
+    if (correctAnswer >= optionCount) {
+      setMessage("Please select the correct answer.");
       return;
     }
 
@@ -255,6 +289,7 @@ function QuestionManager({
 
     await loadQuestions();
     resetForm();
+
     setMessage(
       editingId
         ? "Question updated successfully!"
@@ -263,11 +298,24 @@ function QuestionManager({
   };
 
   const editQuestion = (question: Question) => {
+    const savedOptions =
+      question.options.length === 5
+        ? question.options
+        : question.options.length === 4
+          ? question.options
+          : ["", "", "", ""];
+
     setEditingId(question.id);
     setQuestionText(question.question);
-    setOptions([...question.options]);
-    setCorrectAnswer(question.correctAnswer);
+    setOptionCount(savedOptions.length);
+    setOptions([...savedOptions]);
+    setCorrectAnswer(
+      question.correctAnswer < savedOptions.length
+        ? question.correctAnswer
+        : 0
+    );
     setSelectedSubject(question.category);
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -320,6 +368,7 @@ function QuestionManager({
             placeholder="Enter subject name e.g. Maths"
             style={{ flex: 1, minWidth: 200, padding: 12 }}
           />
+
           <button className="primary-button" onClick={addSubject}>
             Add Subject
           </button>
@@ -350,7 +399,9 @@ function QuestionManager({
                       }
                       style={{ width: 120 }}
                     />
+
                     <button onClick={saveSubjectEdit}>Save</button>
+
                     <button onClick={() => setEditingSubject(null)}>
                       Cancel
                     </button>
@@ -358,9 +409,11 @@ function QuestionManager({
                 ) : (
                   <>
                     <strong>{subject}</strong>
+
                     <button onClick={() => startEditSubject(subject)}>
                       ✏️
                     </button>
+
                     <button onClick={() => deleteSubject(subject)}>
                       🗑️
                     </button>
@@ -381,6 +434,7 @@ function QuestionManager({
 
       <div className="card" style={{ padding: 24, marginBottom: 25 }}>
         <label htmlFor="question-subject">Select Subject</label>
+
         <select
           id="question-subject"
           value={selectedSubject}
@@ -400,6 +454,7 @@ function QuestionManager({
         </select>
 
         <label htmlFor="question-text">Question</label>
+
         <textarea
           id="question-text"
           rows={3}
@@ -415,6 +470,29 @@ function QuestionManager({
         />
 
         <h3>Answer Options</h3>
+
+        <label htmlFor="option-count">
+          Number of options
+        </label>
+
+        <select
+          id="option-count"
+          value={optionCount}
+          onChange={(e) => changeOptionCount(Number(e.target.value))}
+          style={{
+            display: "block",
+            width: "100%",
+            padding: 12,
+            margin: "10px 0 20px",
+          }}
+        >
+          <option value={4}>4 Options (A, B, C, D)</option>
+          <option value={5}>5 Options (A, B, C, D, E)</option>
+        </select>
+
+        <p style={{ color: "#64748b", marginBottom: 15 }}>
+          Select the radio button next to the correct answer.
+        </p>
 
         {options.map((option, index) => (
           <div
@@ -432,13 +510,19 @@ function QuestionManager({
               checked={correctAnswer === index}
               onChange={() => setCorrectAnswer(index)}
             />
+
+            <strong style={{ minWidth: 25 }}>
+              {String.fromCharCode(65 + index)}.
+            </strong>
+
             <input
               type="text"
               value={option}
-              placeholder={`Option ${index + 1}`}
+              placeholder={`Enter option ${String.fromCharCode(65 + index)}`}
               onChange={(e) => updateOption(index, e.target.value)}
               style={{ flex: 1, minWidth: 0, padding: 12 }}
             />
+
             {correctAnswer === index && (
               <span style={{ color: "green", fontWeight: "bold" }}>
                 Correct
@@ -468,7 +552,9 @@ function QuestionManager({
         </div>
 
         {message && (
-          <p style={{ marginTop: 15, fontWeight: "bold" }}>{message}</p>
+          <p style={{ marginTop: 15, fontWeight: "bold" }}>
+            {message}
+          </p>
         )}
       </div>
 
@@ -484,6 +570,7 @@ function QuestionManager({
       <div className="card" style={{ padding: 24 }}>
         <div style={{ marginBottom: 20 }}>
           <label htmlFor="filter-subject">Filter by Subject</label>
+
           <select
             id="filter-subject"
             value={selectedSubject}
@@ -538,6 +625,7 @@ function QuestionManager({
                   >
                     Edit
                   </button>
+
                   <button
                     className="secondary-button"
                     onClick={() => deleteQuestion(question.id)}

@@ -5,17 +5,28 @@ import { supabase } from "../lib/supabase";
 type SchoolAdminDashboardProps = {
   schoolName: string;
   schoolId: string;
+  quizMinutes: number;
+  onSaveQuizMinutes: (minutes: number) => Promise<void>;
   onNavigate: (page: string) => void;
 };
 
 function SchoolAdminDashboard({
   schoolName,
   schoolId,
+  quizMinutes,
+  onSaveQuizMinutes,
   onNavigate,
 }: SchoolAdminDashboardProps) {
   const [totalStudents, setTotalStudents] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const [duration, setDuration] = useState(String(quizMinutes));
+  const [savingTime, setSavingTime] = useState(false);
+
+  useEffect(() => {
+    setDuration(String(quizMinutes));
+  }, [quizMinutes]);
 
   useEffect(() => {
     async function loadStudentCount() {
@@ -40,6 +51,26 @@ function SchoolAdminDashboard({
       loadStudentCount();
     }
   }, [schoolId]);
+
+  const handleSaveTime = async () => {
+    const minutes = Number(duration);
+
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 180) {
+      alert("Please enter a time between 1 and 180 minutes.");
+      return;
+    }
+
+    try {
+      setSavingTime(true);
+      await onSaveQuizMinutes(minutes);
+      alert("Quiz time saved successfully!");
+    } catch (error) {
+      console.error("Quiz time save error:", error);
+      alert("Could not save quiz time. Please try again.");
+    } finally {
+      setSavingTime(false);
+    }
+  };
 
   const stats = [
     {
@@ -146,6 +177,47 @@ function SchoolAdminDashboard({
           Student count error: {error}
         </p>
       )}
+
+      <div className="card" style={{ padding: "24px", marginTop: "25px" }}>
+        <h2>Quiz Time Settings</h2>
+        <p>Set the time limit students will receive for their quizzes.</p>
+
+        <label
+          htmlFor="admin-quiz-duration"
+          style={{ display: "block", margin: "15px 0 8px" }}
+        >
+          Quiz duration (minutes)
+        </label>
+
+        <input
+          id="admin-quiz-duration"
+          type="number"
+          min="1"
+          max="180"
+          value={duration}
+          onChange={(e) => setDuration(e.target.value)}
+          style={{
+            width: "100%",
+            maxWidth: "300px",
+            padding: "12px",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+          }}
+        />
+
+        <p style={{ fontSize: "13px", color: "#777" }}>
+          Minimum 1 minute, maximum 180 minutes. Current saved time:{" "}
+          {quizMinutes} minutes.
+        </p>
+
+        <button
+          className="primary-button"
+          onClick={handleSaveTime}
+          disabled={savingTime || !schoolId}
+        >
+          {savingTime ? "Saving..." : "Save Quiz Time"}
+        </button>
+      </div>
 
       <div className="section-heading" style={{ marginTop: "30px" }}>
         <div>
