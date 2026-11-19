@@ -90,7 +90,7 @@ function Login({ onLogin }: LoginProps) {
       const { error } = await supabase.auth.resetPasswordForEmail(
         email.trim(),
         {
-          redirectTo: "https://quizly-app-roan.vercel.app",
+          redirectTo: "https://quizly-app-roan.vercel.app/?type=recovery",
         }
       );
 
