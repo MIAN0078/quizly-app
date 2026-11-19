@@ -1,5 +1,6 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { signIn } from "../lib/auth";
 import { supabase } from "../lib/supabase";
 
@@ -9,6 +10,8 @@ interface LoginProps {
 
 function Login({ onLogin }: LoginProps) {
   const [isSignup, setIsSignup] = useState(false);
+  const [isResetPassword, setIsResetPassword] = useState(false);
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,7 +26,113 @@ function Login({ onLogin }: LoginProps) {
 
   const [isLoading, setIsLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  // Detect Supabase password recovery link
+  useEffect(() => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setIsResetPassword(true);
+        setPassword("");
+        setConfirmPassword("");
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Send password reset email
+  async function handleForgotPassword() {
+    if (!email.trim()) {
+      alert("Please enter your email address first.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        email.trim(),
+        {
+          redirectTo: window.location.origin,
+        }
+      );
+
+      if (error) throw error;
+
+      alert("Password reset link has been sent to your email.");
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Could not send password reset email."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  // Update new password
+  async function handleResetPassword(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    if (password.length < 8) {
+      alert("Password must be at least 8 characters.");
+      return;
+    }
+
+    if (!/[A-Z]/.test(password)) {
+      alert("Add at least one uppercase letter.");
+      return;
+    }
+
+    if (!/[a-z]/.test(password)) {
+      alert("Add at least one lowercase letter.");
+      return;
+    }
+
+    if (!/[0-9]/.test(password)) {
+      alert("Add at least one number.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      alert("Passwords do not match.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password,
+      });
+
+      if (error) throw error;
+
+      alert("Password updated successfully! Please login again.");
+
+      await supabase.auth.signOut();
+
+      setPassword("");
+      setConfirmPassword("");
+      setIsResetPassword(false);
+      setIsSignup(false);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Could not update password."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  // Normal login and signup
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     const newErrors = {
@@ -128,6 +237,85 @@ function Login({ onLogin }: LoginProps) {
     });
   }
 
+  // New Password Screen
+  if (isResetPassword) {
+    return (
+      <div className="login-page">
+        <div className="login-left">
+          <div className="login-brand">
+            <span className="login-brand-icon">Q</span>
+            <span>Quizly</span>
+          </div>
+
+          <div className="login-welcome">
+            <span className="login-tag">SECURE YOUR ACCOUNT</span>
+            <h1>Create a new password!</h1>
+            <p>
+              Choose a strong password to protect your Quizly account.
+            </p>
+            <div className="login-decoration">
+              <div className="login-circle">?</div>
+              <div className="login-small-card">🔐 Stay secure!</div>
+            </div>
+          </div>
+
+          <p className="login-copyright">
+            © 2026 Quizly. All rights reserved.
+          </p>
+        </div>
+
+        <div className="login-right">
+          <div className="login-form-wrapper">
+            <div className="login-mobile-brand">Q</div>
+
+            <span className="login-tag">PASSWORD RECOVERY</span>
+            <h2>Set a New Password</h2>
+
+            <p className="login-subtitle">
+              Enter your new password and confirm it below.
+            </p>
+
+            <form onSubmit={handleResetPassword} noValidate>
+              <label htmlFor="new-password">New Password</label>
+
+              <input
+                id="new-password"
+                type="password"
+                placeholder="Enter new password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+
+              <label htmlFor="confirm-new-password">
+                Confirm New Password
+              </label>
+
+              <input
+                id="confirm-new-password"
+                type="password"
+                placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+              />
+
+              <button
+                className="login-submit"
+                type="submit"
+                disabled={isLoading}
+              >
+                {isLoading ? "Please wait..." : "Update Password"}
+                <span>→</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Normal Login and Signup Screen
   return (
     <div className="login-page">
       <div className="login-left">
@@ -241,6 +429,25 @@ function Login({ onLogin }: LoginProps) {
 
             {errors.password && (
               <p className="validation-error">{errors.password}</p>
+            )}
+
+            {!isSignup && (
+              <div style={{ textAlign: "right", marginBottom: "15px" }}>
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={isLoading}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#6c63ff",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  {isLoading ? "Please wait..." : "Forgot Password?"}
+                </button>
+              </div>
             )}
 
             {isSignup && (
