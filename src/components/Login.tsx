@@ -1,5 +1,8 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { signIn } from "../lib/auth";
+import { supabase } from "../lib/supabase";
 
 interface LoginProps {
   onLogin: (name: string) => void;
@@ -7,6 +10,8 @@ interface LoginProps {
 
 function Login({ onLogin }: LoginProps) {
   const [isSignup, setIsSignup] = useState(false);
+  const [isResetPassword, setIsResetPassword] = useState(false);
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -19,7 +24,149 @@ function Login({ onLogin }: LoginProps) {
     confirmPassword: "",
   });
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Detect Supabase password recovery link
+  useEffect(() => {
+    let mounted = true;
+
+    function showResetScreen() {
+      if (!mounted) return;
+
+      setIsResetPassword(true);
+      setPassword("");
+      setConfirmPassword("");
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        showResetScreen();
+      }
+    });
+
+    async function checkRecoveryLink() {
+      const searchParams = new URLSearchParams(
+        window.location.search
+      );
+
+      const hashParams = new URLSearchParams(
+        window.location.hash.replace(/^#/, "")
+      );
+
+      const isRecovery =
+        searchParams.has("code") ||
+        searchParams.get("type") === "recovery" ||
+        hashParams.get("type") === "recovery";
+
+      if (isRecovery) {
+        const { data, error } = await supabase.auth.getSession();
+
+        if (!error && data.session) {
+          showResetScreen();
+        }
+      }
+    }
+
+    checkRecoveryLink();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Send password reset email
+  async function handleForgotPassword() {
+    if (!email.trim()) {
+      alert("Please enter your email address first.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        email.trim(),
+        {
+          redirectTo: "https://quizly-app-roan.vercel.app",
+        }
+      );
+
+      if (error) throw error;
+
+      alert("Password reset link has been sent to your email.");
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Could not send password reset email."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  // Update new password
+  async function handleResetPassword(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    if (password.length < 8) {
+      alert("Password must be at least 8 characters.");
+      return;
+    }
+
+    if (!/[A-Z]/.test(password)) {
+      alert("Add at least one uppercase letter.");
+      return;
+    }
+
+    if (!/[a-z]/.test(password)) {
+      alert("Add at least one lowercase letter.");
+      return;
+    }
+
+    if (!/[0-9]/.test(password)) {
+      alert("Add at least one number.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      alert("Passwords do not match.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password,
+      });
+
+      if (error) throw error;
+
+      alert("Password updated successfully! Please login again.");
+
+      await supabase.auth.signOut();
+
+      setPassword("");
+      setConfirmPassword("");
+      setIsResetPassword(false);
+      setIsSignup(false);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Could not update password."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  // Normal login and signup
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     const newErrors = {
@@ -65,11 +212,48 @@ function Login({ onLogin }: LoginProps) {
       return;
     }
 
-    const userName = isSignup
-      ? name.trim()
-      : email.trim().split("@")[0];
+    setIsLoading(true);
 
-    onLogin(userName);
+    try {
+      if (isSignup) {
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              full_name: name.trim(),
+            },
+          },
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        if (data.session) {
+          onLogin(name.trim());
+        } else {
+          alert(
+            "Account created! Please check your email for confirmation before signing in."
+          );
+        }
+      } else {
+        await signIn(email.trim(), password);
+
+        const userName = email.trim().split("@")[0];
+
+        onLogin(userName);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Something went wrong. Please try again.";
+
+      alert(message);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   function switchMode() {
@@ -78,6 +262,7 @@ function Login({ onLogin }: LoginProps) {
     setEmail("");
     setPassword("");
     setConfirmPassword("");
+
     setErrors({
       name: "",
       email: "",
@@ -86,6 +271,86 @@ function Login({ onLogin }: LoginProps) {
     });
   }
 
+  // New Password Screen
+  if (isResetPassword) {
+    return (
+      <div className="login-page">
+        <div className="login-left">
+          <div className="login-brand">
+            <span className="login-brand-icon">Q</span>
+            <span>Quizly</span>
+          </div>
+
+          <div className="login-welcome">
+            <span className="login-tag">SECURE YOUR ACCOUNT</span>
+            <h1>Create a new password!</h1>
+            <p>
+              Choose a strong password to protect your Quizly account.
+            </p>
+
+            <div className="login-decoration">
+              <div className="login-circle">?</div>
+              <div className="login-small-card">🔐 Stay secure!</div>
+            </div>
+          </div>
+
+          <p className="login-copyright">
+            © 2026 Quizly. All rights reserved.
+          </p>
+        </div>
+
+        <div className="login-right">
+          <div className="login-form-wrapper">
+            <div className="login-mobile-brand">Q</div>
+
+            <span className="login-tag">PASSWORD RECOVERY</span>
+            <h2>Set a New Password</h2>
+
+            <p className="login-subtitle">
+              Enter your new password and confirm it below.
+            </p>
+
+            <form onSubmit={handleResetPassword} noValidate>
+              <label htmlFor="new-password">New Password</label>
+
+              <input
+                id="new-password"
+                type="password"
+                placeholder="Enter new password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+
+              <label htmlFor="confirm-new-password">
+                Confirm New Password
+              </label>
+
+              <input
+                id="confirm-new-password"
+                type="password"
+                placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+              />
+
+              <button
+                className="login-submit"
+                type="submit"
+                disabled={isLoading}
+              >
+                {isLoading ? "Please wait..." : "Update Password"}
+                <span>→</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Normal Login and Signup Screen
   return (
     <div className="login-page">
       <div className="login-left">
@@ -143,6 +408,7 @@ function Login({ onLogin }: LoginProps) {
             {isSignup && (
               <>
                 <label htmlFor="signup-name">Full Name</label>
+
                 <input
                   id="signup-name"
                   type="text"
@@ -154,6 +420,7 @@ function Login({ onLogin }: LoginProps) {
                     setErrors((prev) => ({ ...prev, name: "" }));
                   }}
                 />
+
                 {errors.name && (
                   <p className="validation-error">{errors.name}</p>
                 )}
@@ -161,6 +428,7 @@ function Login({ onLogin }: LoginProps) {
             )}
 
             <label htmlFor="login-email">Email Address</label>
+
             <input
               id="login-email"
               type="email"
@@ -172,6 +440,7 @@ function Login({ onLogin }: LoginProps) {
                 setErrors((prev) => ({ ...prev, email: "" }));
               }}
             />
+
             {errors.email && (
               <p className="validation-error">{errors.email}</p>
             )}
@@ -192,8 +461,28 @@ function Login({ onLogin }: LoginProps) {
                 setErrors((prev) => ({ ...prev, password: "" }));
               }}
             />
+
             {errors.password && (
               <p className="validation-error">{errors.password}</p>
+            )}
+
+            {!isSignup && (
+              <div style={{ textAlign: "right", marginBottom: "15px" }}>
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={isLoading}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#6c63ff",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  {isLoading ? "Please wait..." : "Forgot Password?"}
+                </button>
+              </div>
             )}
 
             {isSignup && (
@@ -201,6 +490,7 @@ function Login({ onLogin }: LoginProps) {
                 <label htmlFor="confirm-password">
                   Confirm Password
                 </label>
+
                 <input
                   id="confirm-password"
                   type="password"
@@ -215,6 +505,7 @@ function Login({ onLogin }: LoginProps) {
                     }));
                   }}
                 />
+
                 {errors.confirmPassword && (
                   <p className="validation-error">
                     {errors.confirmPassword}
@@ -223,8 +514,17 @@ function Login({ onLogin }: LoginProps) {
               </>
             )}
 
-            <button className="login-submit" type="submit">
-              {isSignup ? "Create Account" : "Sign In"}
+            <button
+              className="login-submit"
+              type="submit"
+              disabled={isLoading}
+            >
+              {isLoading
+                ? "Please wait..."
+                : isSignup
+                  ? "Create Account"
+                  : "Sign In"}
+
               <span>→</span>
             </button>
           </form>
