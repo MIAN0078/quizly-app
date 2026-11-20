@@ -29,6 +29,7 @@ type SchoolSetupProps = {
 
 function SchoolSetup({ onSchoolSelected }: SchoolSetupProps) {
   const [schoolName, setSchoolName] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
   const [schools, setSchools] = useState<School[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -64,7 +65,7 @@ function SchoolSetup({ onSchoolSelected }: SchoolSetupProps) {
       setCreating(true);
       setError("");
 
-      const schoolId = await createSchool(schoolName);
+      const schoolId = await createSchool(schoolName, adminEmail);
 
       if (typeof schoolId !== "string") {
         throw new Error("School was created, but its ID was not returned.");
@@ -141,6 +142,20 @@ function SchoolSetup({ onSchoolSelected }: SchoolSetupProps) {
             boxSizing: "border-box",
           }}
         />
+        <input
+  type="email"
+  value={adminEmail}
+  onChange={(event) => setAdminEmail(event.target.value)}
+  placeholder="Enter School Admin Email"
+  style={{
+    width: "100%",
+    padding: "14px",
+    border: "1px solid #ddd",
+    borderRadius: "9px",
+    marginBottom: "12px",
+    boxSizing: "border-box",
+  }}
+/>
 
         <button
           onClick={handleCreateSchool}
